@@ -1,19 +1,18 @@
 #include <iostream>
-// #include <cstring>      // strlen
+#include <cstring>      // strlen
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <arpa/inet.h>  // inet_pton
 #include <netinet/in.h> // sockaddr_in
 #include <unistd.h>     // close
-// #include <vector>
 
+#define PORT 8080
 
 int main() {
   int server_fd, new_socket;          // Файловый дескриптор сервера и сокет для клиента
   struct sockaddr_in address;         // Структура для хранения информации о сетевом адресе
   const int opt = 1;                  // Переменная для настройки опций сокета, позволит дать истинное значение для функций SO_REUSEADDR | SO_REUSEPORT
   int addrlen = sizeof(address);
-  const int PORT = 8080;
 
   // Создаём сокет
   if ((server_fd = socket(AF_INET, SOCK_STREAM, 0)) == 0) {   // AF_INET - значит IPv4, SOCK_STREAM - указывает на TCP (Потоковый протокол), 0 - используем стандартный протокол для данного сокета
@@ -46,36 +45,61 @@ int main() {
 
   std::cout << "Server listening on port " << PORT << std::endl;
 
-  while(true) { // Сервер в этом цикле вечно принимает подключения
-    if ((new_socket = accept(server_fd, (struct sockaddr *)&address,    // Сервер постоянно принимает подключение от клиентов. accept блокирует выполнение программы, пока не поступит новое подключение. Возвращает новый дескриптор сокета для общения с клиентом.
-                             (socklen_t*)&addrlen))<0) {
-      perror("accept");
-      exit(EXIT_FAILURE);
+  char buffer[1024] = {0};                                            // Создание буфера для хранения данных клиента
+
+  while (true) {
+    // Принятие входящего соединения
+    if ((new_socket = accept(server_fd, (struct sockaddr *)&address, (socklen_t*)&addrlen)) < 0) {
+      std::cerr << "Connection error" << std::endl;
     }
 
-    char buffer[1024] = {0};                                            // Создание буфера для хранения данных клиента
-    // std::vector<char> buffer[1024];
+    std::cout << "Client connected." << std::endl;
 
-    while (true) {  // Сервер в этом цикле вечно читает и вечно отвечает
-      // Чтение данных от клиента
-      int bytes_read = read(new_socket, buffer, sizeof(buffer) - 1);   // -1 нужен для нуль терминатора
-      if (bytes_read <= 0) {
-        std::cout << "Client disconnected or error occurred" << std::endl;
-        break; // Выход из внутреннего цикла при отключении клиента или ошибке
+           // Используем select для отслеживания состояния сокета
+    fd_set readfds;
+    FD_ZERO(&readfds);
+    FD_SET(new_socket, &readfds);
+
+    // Установка тайм-аута на select (например, 10 секунд)
+    struct timeval timeout;
+    timeout.tv_sec = 10;
+    timeout.tv_usec = 0;
+
+    while (true){
+
+      int activity = select(new_socket + 1, &readfds, NULL, NULL, NULL);  // Ожидание данных от клиента
+
+      if (activity < 0) {
+        std::cerr << "Error select()" << std::endl;
+        close(new_socket);
+        break;
+      } else if (activity == 0) {
+        std::cout << "Timeout." << std::endl;
+        close(new_socket);
+        break;
       }
 
-      buffer[bytes_read] = '\0'; // Добавляем нуль-терминатор для корректного вывода строки
-      std::cout << "Received: " << buffer << std::endl;
 
-      // Отправка ответа клиенту
-      std::string response = "Message received: ";
-      response += buffer;
-      send(new_socket, response.c_str(), response.size(), 0);
+      // Чтение сообщения от клиента
+      if (FD_ISSET(new_socket, &readfds)) {
+        int valread = read(new_socket, buffer, sizeof(buffer));
+        if (valread > 0) {
+          std::cout << "Message recieved: " << buffer << std::endl;
+          // Здесь можно обработать полученное сообщение по необходимости
+        } else {
+          std::cout << "Client disconnected." << std::endl;
+          close(new_socket);
+          break;
+        }
+      }
+
+      // Очистка буфера для следующего сообщения
+      memset(buffer, 0, sizeof(buffer));
     }
 
-
-    close(new_socket);
+    std::cout << "Waiting for new connection..." << std::endl;
   }
 
+  close(server_fd);
   return 0;
 }
